@@ -27,7 +27,10 @@ import {
 } from "./respond.js";
 import { logger } from "../logger.js";
 import { startLiveStream, updateLiveStream, finishLiveStream, markActive, markDone } from "./live.js";
+import { monitorBegin, monitorModel, monitorStreaming, monitorEnd } from "./monitor.js";
 import { compressMessages, getCompressionConfig } from "./compress.js";
+import { autoCompressIfNeeded, modelAutoCompressEnabled } from "./ucomp.js";
+import { msgSignature } from "./msgsig.js";
 
 export type GatewayResult =
   | { type: "json"; statusCode: number; headers: Record<string, string>; body: unknown }
@@ -284,21 +287,24 @@ export async function processChat(input: ProcessInput): Promise<GatewayResult> {
   // 无会话 ID 时（如 DeepSeek Harness），按「API Key + 标题」归并到最近的同一会话，避免每轮新建重复记录
   const conversationId = parsed.conversationId || findRecentConversation(apiKeyId, title) || genId("conv");
   markActive(requestId);
+  monitorBegin({
+    requestId,
+    conversationId,
+    sourceSessionId: parsed.conversationId ?? null,
+    apiKeyId,
+    clientIp,
+    protocol,
+    modelRequested: parsed.model ?? "auto",
+    expectedModel: "",
+    title,
+    stream: parsed.stream,
+    startedAt: started,
+  });
 
-  // 0. 上下文压缩（头部锚点 + 近期窗口 + 中间摘要/丢弃；按 API Key 启用）
+  // 0. 路由解析（提前到压缩之前：按模型自动压缩的触发阈值取决于目标模型的配置）
   const keyCfg = apiKeyId ? getApiKey(apiKeyId) : undefined;
   let inputTokensBefore: number | null = null;
   let inputTokensAfter: number | null = null;
-  const compCfg = getCompressionConfig();
-  const keyCompressionOn = keyCfg ? keyCfg.compression_enabled !== 0 : true;
-  if (compCfg.enabled && keyCompressionOn) {
-    const cr = await compressMessages(parsed.messages, compCfg);
-    parsed.messages = cr.messages;
-    inputTokensBefore = cr.beforeTokens;
-    inputTokensAfter = cr.afterTokens;
-  }
-
-  // 1. 路由解析
   const isDirect =
     !!parsed.model && parsed.model !== "auto" && parsed.model !== "router" &&
     resolveModel(parsed.model, undefined).tierSource === null;
@@ -315,8 +321,27 @@ export async function processChat(input: ProcessInput): Promise<GatewayResult> {
   let target = resolveModel(isDirect ? parsed.model : "auto", explicitTier);
   if (viaAuto) target = { ...target, tierSource: "auto", viaAutoDetect: true };
   if (explicitTier) target.usedComplexity = explicitTier;
+  // 监控面板：路由确定后即可展示「正在使用的模型」（首个候选，重试/流式打开后会更新）
+  monitorModel(requestId, target.candidates[0]?.model.name ?? "");
 
-  // 2. Skill 与工具（含按 API Key 配置的 Skill / MCP 允许列表）
+  // 0.5 上下文压缩（模型勾选「自动压缩」→ ucomp 按 token 阈值压缩，优先于全局压缩；
+  //      否则维持原有行为：头部锚点 + 近期窗口 + 中间摘要/丢弃，按全局配置与 API Key 开关）
+  const compCfg = getCompressionConfig();
+  const keyCompressionOn = keyCfg ? keyCfg.compression_enabled !== 0 : true;
+  const autoCompModel = target.candidates.find((c) => modelAutoCompressEnabled(c.model));
+  if (autoCompModel) {
+    const r = await autoCompressIfNeeded(parsed.messages, autoCompModel.model, conversationId, compCfg);
+    parsed.messages = r.messages;
+    inputTokensBefore = r.beforeTokens;
+    inputTokensAfter = r.afterTokens;
+  } else if (compCfg.enabled && keyCompressionOn) {
+    const cr = await compressMessages(parsed.messages, compCfg);
+    parsed.messages = cr.messages;
+    inputTokensBefore = cr.beforeTokens;
+    inputTokensAfter = cr.afterTokens;
+  }
+
+  // 1. Skill 与工具（含按 API Key 配置的 Skill / MCP 允许列表）
   const keySkillIds = keyCfg ? parseStringArray(keyCfg.skill_ids) : [];
   const keyMcpIds = keyCfg ? parseStringArray(keyCfg.mcp_server_ids) : [];
 
@@ -454,6 +479,7 @@ export async function processChat(input: ProcessInput): Promise<GatewayResult> {
   } catch (e) {
     logger.error("网关处理失败", e);
     markDone(requestId);
+    monitorEnd(requestId, { status: "error", error: (e as Error).message ?? "内部错误" });
     updateRequest(requestId, {
       status: "error",
       error: (e as Error).message ?? "内部错误",
@@ -476,6 +502,12 @@ export async function processChat(input: ProcessInput): Promise<GatewayResult> {
     const model = run.candidate.model;
     const cost = calcCost(model, run.usage);
     const totalTokens = run.usage.promptTokens + run.usage.completionTokens;
+    monitorEnd(requestId, {
+      status: "success",
+      model: model.name,
+      usage: run.usage,
+      cost,
+    });
     updateRequest(requestId, {
       model_used: model.name,
       provider_id: model.provider_id,
@@ -568,13 +600,15 @@ function extractContentLength(sse: string, protocol: string): number {
 /** 流式透传：转发上游字节流，同时缓冲文本用于统计 */
 async function* streamPassthrough(ctx: PassthroughCtx): AsyncIterable<string | Uint8Array> {
   let lastErr: Error | undefined;
-  startLiveStream(ctx.requestId, ctx.started);
+  startLiveStream(ctx.requestId, ctx.started, ctx.conversationId);
   try {
     for (const cand of ctx.candidates) {
     try {
       const adapter = getAdapterForProtocol(getUpstreamProtocol(cand.provider, ctx.protocol));
       const req = buildRequest(cand, ctx.parsed, ctx.allTools, ctx.skillPrompt, true);
       const stream = await adapter.stream(req);
+      monitorModel(ctx.requestId, cand.model.name);
+      monitorStreaming(ctx.requestId, true);
       const decoder = new TextDecoder();
       let buffered = "";
       for await (const chunk of stream) {
@@ -587,6 +621,8 @@ async function* streamPassthrough(ctx: PassthroughCtx): AsyncIterable<string | U
       const cost = calcCost(cand.model, usage);
       const { firstTokenAt } = finishLiveStream(ctx.requestId);
       markDone(ctx.requestId);
+      monitorStreaming(ctx.requestId, false);
+      monitorEnd(ctx.requestId, { status: "success", model: cand.model.name, usage, cost });
       updateRequest(ctx.requestId, {
         model_used: cand.model.name,
         provider_id: cand.model.provider_id,
@@ -614,6 +650,7 @@ async function* streamPassthrough(ctx: PassthroughCtx): AsyncIterable<string | U
   // 全部失败：输出错误事件
   finishLiveStream(ctx.requestId);
   markDone(ctx.requestId);
+  monitorEnd(ctx.requestId, { status: "error", error: lastErr?.message ?? "上游调用失败" });
   updateRequest(ctx.requestId, {
     status: "error",
     error: lastErr?.message ?? "上游调用失败",
@@ -630,34 +667,9 @@ async function* streamPassthrough(ctx: PassthroughCtx): AsyncIterable<string | U
     // 确保客户端断开/流提前终止时也清理（避免活跃请求泄漏）
     finishLiveStream(ctx.requestId);
     markDone(ctx.requestId);
+    // 成功路径已结束的请求此处为幂等空操作；仅在客户端断开时生效
+    monitorEnd(ctx.requestId, { status: "error", error: "客户端断开连接" });
   }
-}
-
-/** 消息去重签名：role + content + tool_call_id + 工具名列表（忽略易变的参数序列化细节） */
-function msgSignature(m: {
-  role: string;
-  content: string | null;
-  tool_call_id?: string | null;
-  tool_calls?: unknown;
-}): string {
-  let names = "";
-  const tc = m.tool_calls;
-  if (Array.isArray(tc)) {
-    names = tc
-      .map((t) => (t as { function?: { name?: string } }).function?.name ?? "")
-      .sort()
-      .join(",");
-  } else if (typeof tc === "string" && tc) {
-    try {
-      const arr = JSON.parse(tc);
-      if (Array.isArray(arr)) {
-        names = arr.map((t) => t?.function?.name ?? "").sort().join(",");
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  return `${m.role}\u0000${m.content ?? ""}\u0000${m.tool_call_id ?? ""}\u0000${names}`;
 }
 
 /** 判断是否为客户端注入的易变上下文（每次版本号/时间戳/快照变化，不应重复记录到对话历史） */

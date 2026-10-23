@@ -17,3 +17,5 @@ coverage/
 .pnpm-store/
 .home/
 .npm-cache/
+__pycache__/
+*.pyc

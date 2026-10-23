@@ -5,10 +5,19 @@ export interface LiveStream {
   firstTokenAt: number | null;
   tokens: number; // 估算的已完成输出 token
   updatedAt: number;
+  owner: string | null; // 所属会话 ID（用于向监控面板回报增量）
 }
 
 const streams = new Map<string, LiveStream>();
 const active = new Set<string>();
+
+// 流式 token 增量回调（由 monitor.ts 注册，用于会话级实时速度统计）
+export type StreamTokenListener = (conversationId: string, deltaTokens: number) => void;
+let tokenListener: StreamTokenListener | null = null;
+
+export function setStreamTokenListener(l: StreamTokenListener | null): void {
+  tokenListener = l;
+}
 
 export function markActive(id: string): void {
   active.add(id);
@@ -18,8 +27,8 @@ export function markDone(id: string): void {
   active.delete(id);
 }
 
-export function startLiveStream(id: string, startedAt: number): void {
-  streams.set(id, { startedAt, firstTokenAt: null, tokens: 0, updatedAt: startedAt });
+export function startLiveStream(id: string, startedAt: number, owner: string | null = null): void {
+  streams.set(id, { startedAt, firstTokenAt: null, tokens: 0, updatedAt: startedAt, owner });
 }
 
 export function updateLiveStream(id: string, contentLength: number): void {
@@ -27,7 +36,12 @@ export function updateLiveStream(id: string, contentLength: number): void {
   if (!s) return;
   const now = Date.now();
   // 粗略估算 token（约 3 字符 1 token），仅用于实时展示
-  s.tokens = Math.max(s.tokens, Math.floor(contentLength / 3));
+  const estimated = Math.floor(contentLength / 3);
+  if (estimated > s.tokens) {
+    const delta = estimated - s.tokens;
+    s.tokens = estimated;
+    if (s.owner && tokenListener) tokenListener(s.owner, delta);
+  }
   s.updatedAt = now;
   if (s.firstTokenAt === null && contentLength > 0) s.firstTokenAt = now;
 }

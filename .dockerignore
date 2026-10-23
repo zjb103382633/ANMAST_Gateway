@@ -1,0 +1,24 @@
+# 构建上下文里排除本地产物与敏感数据（运行时数据一律走 volume）
+.git
+.github
+.zcode
+node_modules
+**/node_modules
+server/dist
+web/dist
+data
+server/data
+*.dat
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.key
+*.log
+.DS_Store
+coverage
+.pnpm-store
+.homes
+.npm-cache
+.env
+.env.local

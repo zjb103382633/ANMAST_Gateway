@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Layout, Menu, Typography, Button, Space, Switch, InputNumber, Modal } from "antd";
 import {
   DashboardOutlined,
+  MonitorOutlined,
   BarChartOutlined,
   CloudServerOutlined,
   RobotOutlined,
@@ -26,6 +27,7 @@ const { Sider, Header, Content } = Layout;
 
 const items = [
   { key: "/", icon: <DashboardOutlined />, label: "仪表盘" },
+  { key: "/monitor", icon: <MonitorOutlined />, label: "请求监控" },
   { key: "/usage", icon: <BarChartOutlined />, label: "用量详情" },
   { key: "/providers", icon: <CloudServerOutlined />, label: "供应商" },
   { key: "/models", icon: <RobotOutlined />, label: "模型" },

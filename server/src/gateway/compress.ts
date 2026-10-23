@@ -10,6 +10,8 @@ export interface CompressionConfig {
   window_messages: number; // 近期保留条数
   summarize_middle: boolean; // 中间部分：true=摘要，false=直接丢弃
   summary_model: string; // 摘要模型名（留空则自动选第一个可路由模型）
+  auto_threshold_percent: number; // 按模型自动压缩：触发阈值 = 上下文上限 × 该百分比
+  ucomp_summary_model: string; // ucomp LLM 摘要模型名（留空=内置规则摘要器，不调模型）
 }
 
 export const DEFAULT_COMPRESSION: CompressionConfig = {
@@ -18,6 +20,8 @@ export const DEFAULT_COMPRESSION: CompressionConfig = {
   window_messages: 20,
   summarize_middle: false,
   summary_model: "",
+  auto_threshold_percent: 80,
+  ucomp_summary_model: "",
 };
 
 const SETTINGS_KEY = "compression_config";

@@ -23,6 +23,9 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((v) => v === "true"),
+  // ucomp 桥接：外部 ucomp 检出目录（留空用内置 vendor）与 python 解释器
+  UCOMP_HOME: z.string().default(""),
+  UCOMP_PYTHON: z.string().default(""),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -67,4 +70,9 @@ export const config = {
   webDist: env.WEB_DIST,
   requirePasswordChange: env.REQUIRE_PASSWORD_CHANGE,
   serverRoot: SERVER_ROOT,
+  // ucomp 自动压缩
+  compactionDir: path.join(env.DATA_DIR, "compaction"),
+  ucompPython: env.UCOMP_PYTHON || "python3",
+  ucompHome: env.UCOMP_HOME || path.join(SERVER_ROOT, "vendor"),
+  ucompBridge: path.join(SERVER_ROOT, "vendor", "ucomp_bridge.py"),
 };
