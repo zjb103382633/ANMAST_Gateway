@@ -42,6 +42,8 @@ interface Model {
   priority: number;
   is_router: number;
   usage?: string;
+  auto_compress?: number;
+  max_context_tokens?: number | null;
   enabled: number;
   provider_name?: string;
 }
@@ -156,6 +158,8 @@ export default function Models() {
       output_price: 0,
       priority: 100,
       is_router: false,
+      auto_compress: false,
+      max_context_tokens: undefined,
       tools: true,
       vision: false,
     });
@@ -177,6 +181,8 @@ export default function Models() {
       ...m,
       tiers: tiersField,
       is_router: !!m.is_router,
+      auto_compress: !!m.auto_compress,
+      max_context_tokens: m.max_context_tokens ?? undefined,
       tools: cap.tools !== false,
       vision: !!cap.vision,
       input_price: toDisplay(m.input_price),
@@ -219,6 +225,8 @@ export default function Models() {
       input_cache_read_price: fromDisplay(Number(values.input_cache_read_price ?? 0)),
       input_cache_write_price: fromDisplay(Number(values.input_cache_write_price ?? 0)),
       output_price: fromDisplay(Number(values.output_price ?? 0)),
+      auto_compress: !!values.auto_compress,
+      max_context_tokens: values.max_context_tokens ?? null,
       capabilities: JSON.stringify({ tools: !!values.tools, vision: !!values.vision }),
     };
     delete body.tools;
@@ -292,6 +300,18 @@ export default function Models() {
             title: "上下文",
             dataIndex: "context_window",
             render: (v: number) => v.toLocaleString(),
+          },
+          {
+            title: "自动压缩",
+            dataIndex: "auto_compress",
+            render: (_: unknown, r: Model) =>
+              r.auto_compress ? (
+                <Tag color="green">
+                  {((r.max_context_tokens ?? r.context_window) || 0).toLocaleString()} · 阈值可调
+                </Tag>
+              ) : (
+                "—"
+              ),
           },
           {
             title: `价格 (每1M, ${currency})`,
@@ -403,6 +423,24 @@ export default function Models() {
               <InputNumber style={{ width: "100%" }} />
             </Form.Item>
           </Space>
+          <Space size={16} style={{ display: "flex" }}>
+            <Form.Item
+              name="max_context_tokens"
+              label="压缩触发上下文上限（tokens）"
+              style={{ flex: 1 }}
+              extra="自动压缩的触发参考线，留空则使用上下文窗口；触发比例在「压缩」设置页配置"
+            >
+              <InputNumber style={{ width: "100%" }} min={0} step={1000} />
+            </Form.Item>
+          </Space>
+          <Form.Item
+            name="auto_compress"
+            label="自动压缩上下文（ucomp）"
+            valuePropName="checked"
+            extra="勾选后网关监控该模型每个会话的上下文，达到阈值先压缩历史再重组请求转发；优先于全局压缩设置"
+          >
+            <Switch />
+          </Form.Item>
           <Typography.Text strong>价格（每 1M tokens，{currency}）</Typography.Text>
           <Space size={16} style={{ display: "flex", marginTop: 8 }}>
             <Form.Item name="input_price" label="输入 · 未命中缓存" style={{ flex: 1 }}>

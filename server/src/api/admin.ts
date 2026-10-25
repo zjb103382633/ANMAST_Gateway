@@ -64,8 +64,11 @@ import { openaiJson, fakeOpenAIStream, genId } from "../gateway/respond.js";
 import { toReadable } from "../lib/stream.js";
 import type { ChatMessage, Provider } from "../types.js";
 import { getGlobalLiveSpeed } from "../gateway/live.js";
+import { monitorSnapshot } from "../gateway/monitor.js";
 import { getLatency, recordLatency } from "../latency.js";
 import { getCompressionConfig, saveCompressionConfig, type CompressionConfig } from "../gateway/compress.js";
+import { ucompSelfCheck } from "../gateway/ucomp.js";
+import { clearConversationCompactions } from "../db/repos/compactions.js";
 import { checkForUpdate, runUpdate, getVersion } from "../updater.js";
 import {
   usageSummary,
@@ -473,6 +476,8 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       priority: Number(b.priority ?? 100),
       is_router: b.is_router ? 1 : 0,
       usage: String(b.usage ?? "normal"),
+      auto_compress: b.auto_compress ? 1 : 0,
+      max_context_tokens: b.max_context_tokens == null ? null : Number(b.max_context_tokens),
       enabled: b.enabled === false ? 0 : 1,
     });
     return reply.code(201).send(m);
@@ -497,6 +502,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     if (b.capabilities !== undefined) patch.capabilities = asJsonString(b.capabilities, "{}");
     if (b.is_router !== undefined) patch.is_router = b.is_router ? 1 : 0;
     if (b.usage !== undefined) patch.usage = String(b.usage);
+    if (b.auto_compress !== undefined) patch.auto_compress = b.auto_compress ? 1 : 0;
+    if (b.max_context_tokens !== undefined)
+      patch.max_context_tokens = b.max_context_tokens == null ? null : Number(b.max_context_tokens);
     if (b.enabled !== undefined) patch.enabled = b.enabled ? 1 : 0;
     const m = updateModel(id, patch as never);
     if (!m) return reply.code(404).send({ error: "模型不存在" });
@@ -791,6 +799,19 @@ export function registerAdminRoutes(app: FastifyInstance): void {
     return getGlobalLiveSpeed();
   });
 
+  // 请求监控：按会话聚合的实时流量快照（监控面板每秒轮询）
+  app.get("/api/monitor/sessions", async () => {
+    const snap = monitorSnapshot();
+    const keyNames = new Map(listApiKeys().map((k) => [k.id, k.name]));
+    return {
+      ...snap,
+      sessions: snap.sessions.map((s) => ({
+        ...s,
+        apiKeyName: s.apiKeyId ? keyNames.get(s.apiKeyId) ?? null : null,
+      })),
+    };
+  });
+
   // ---------- 客户端延迟（按来源 IP 区分，页面刷新不丢失） ----------
   app.get("/api/latency", async (req) => {
     return getLatency(req.ip ?? "unknown");
@@ -836,9 +857,20 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       window_messages: b.window_messages !== undefined ? Number(b.window_messages) : cur.window_messages,
       summarize_middle: b.summarize_middle !== undefined ? !!b.summarize_middle : cur.summarize_middle,
       summary_model: b.summary_model !== undefined ? String(b.summary_model) : cur.summary_model,
+      auto_threshold_percent:
+        b.auto_threshold_percent !== undefined
+          ? Math.min(100, Math.max(1, Number(b.auto_threshold_percent) || 80))
+          : cur.auto_threshold_percent,
+      ucomp_summary_model:
+        b.ucomp_summary_model !== undefined ? String(b.ucomp_summary_model) : cur.ucomp_summary_model,
     };
     saveCompressionConfig(next);
     return reply.send(next);
+  });
+
+  // ucomp 桥接环境自检（python 与 ucomp 包是否可用）
+  app.get("/api/compression/ucomp-status", async () => {
+    return ucompSelfCheck();
   });
 
   // ---------- 系统更新 ----------
@@ -892,6 +924,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
         db.exec("DELETE FROM requests");
         db.exec("DELETE FROM messages");
         db.exec("DELETE FROM conversations");
+        clearConversationCompactions();
       });
       return reply.send({ ok: true });
     } catch (e) {

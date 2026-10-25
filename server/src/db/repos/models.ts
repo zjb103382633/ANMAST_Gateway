@@ -111,6 +111,8 @@ export interface ModelInput {
   priority: number;
   is_router: number;
   usage: string;
+  auto_compress: number;
+  max_context_tokens: number | null;
   enabled: number;
 }
 
@@ -119,8 +121,8 @@ export function createModel(input: ModelInput): ModelConfig {
   const now = Date.now();
   getDb()
     .prepare(
-      `INSERT INTO models (id, provider_id, name, display_name, tiers, capabilities, context_window, input_price, input_cache_read_price, input_cache_write_price, output_price, priority, is_router, usage, enabled, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO models (id, provider_id, name, display_name, tiers, capabilities, context_window, input_price, input_cache_read_price, input_cache_write_price, output_price, priority, is_router, usage, auto_compress, max_context_tokens, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -137,6 +139,8 @@ export function createModel(input: ModelInput): ModelConfig {
       input.priority,
       input.is_router,
       input.usage ?? "normal",
+      input.auto_compress ?? 0,
+      input.max_context_tokens ?? null,
       input.enabled,
       now,
       now,
@@ -150,7 +154,7 @@ export function updateModel(id: string, patch: Partial<ModelInput>): ModelConfig
   const next = { ...existing, ...patch, updated_at: Date.now() };
   getDb()
     .prepare(
-      `UPDATE models SET provider_id=?, name=?, display_name=?, tiers=?, capabilities=?, context_window=?, input_price=?, input_cache_read_price=?, input_cache_write_price=?, output_price=?, priority=?, is_router=?, usage=?, enabled=?, updated_at=? WHERE id=?`,
+      `UPDATE models SET provider_id=?, name=?, display_name=?, tiers=?, capabilities=?, context_window=?, input_price=?, input_cache_read_price=?, input_cache_write_price=?, output_price=?, priority=?, is_router=?, usage=?, auto_compress=?, max_context_tokens=?, enabled=?, updated_at=? WHERE id=?`,
     )
     .run(
       next.provider_id,
@@ -166,6 +170,8 @@ export function updateModel(id: string, patch: Partial<ModelInput>): ModelConfig
       next.priority,
       next.is_router,
       next.usage ?? "normal",
+      next.auto_compress ?? 0,
+      next.max_context_tokens ?? null,
       next.enabled,
       next.updated_at,
       id,

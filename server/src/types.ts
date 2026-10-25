@@ -31,6 +31,8 @@ export interface ModelConfig {
   priority: number;
   is_router: number;
   usage: string;
+  auto_compress: number;
+  max_context_tokens: number | null;
   enabled: number;
   created_at: number;
   updated_at: number;

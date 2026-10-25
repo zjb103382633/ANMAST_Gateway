@@ -1,0 +1,27 @@
+services:
+  gateway:
+    build: .
+    image: anmast-gateway:latest
+    container_name: anmast-gateway
+    restart: unless-stopped
+    ports:
+      # 宿主机端口:容器端口（容器内固定 4000）
+      - "${GATEWAY_PORT:-4000}:4000"
+    environment:
+      # 管理员账号（首次启动自动创建；生产务必改掉默认密码或开启强制修改）
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123456}
+      - REQUIRE_PASSWORD_CHANGE=${REQUIRE_PASSWORD_CHANGE:-false}
+      # 供应商密钥加密主密钥；留空则自动生成并保存到 /data/gateway.key（随 volume 持久化）
+      - GATEWAY_SECRET=${GATEWAY_SECRET:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # 数据目录：SQLite 数据库、加密主密钥、Skill、ucomp 压缩外置文件
+      # 默认绑定本仓库 ./data（与本地部署共用一份）；改用命名卷可写成 gateway-data:/data
+      - ${GATEWAY_DATA:-./data}:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

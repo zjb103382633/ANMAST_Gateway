@@ -190,6 +190,25 @@ export const migrations: string[] = [
   `
   ALTER TABLE api_keys ADD COLUMN compression_enabled INTEGER NOT NULL DEFAULT 1;
   `,
+  // v10 —— 按模型自动压缩：触发上下文上限（可空=用 context_window）与开关
+  `
+  ALTER TABLE models ADD COLUMN auto_compress INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE models ADD COLUMN max_context_tokens INTEGER;
+  `,
+  // v11 —— 会话压缩缓存：前缀未变时复用上次的压缩摘要，避免每次请求重复压缩
+  `
+  CREATE TABLE IF NOT EXISTS conversation_compactions (
+    conversation_id TEXT PRIMARY KEY,
+    input_region_start INTEGER NOT NULL,
+    input_boundary_index INTEGER NOT NULL,
+    prefix_hash TEXT NOT NULL,
+    summary_content TEXT NOT NULL,
+    tokens_before INTEGER,
+    tokens_after INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export const DEFAULT_TIERS: { id: string; name: string; description: string; sort: number }[] = [

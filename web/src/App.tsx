@@ -5,6 +5,7 @@ import { RefreshProvider } from "./refresh";
 import MainLayout from "./layout/MainLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import Monitor from "./pages/Monitor";
 import Providers from "./pages/Providers";
 import Models from "./pages/Models";
 import Routing from "./pages/Routing";
@@ -38,6 +39,7 @@ export default function App() {
           }
         >
           <Route index element={<Dashboard />} />
+          <Route path="monitor" element={<Monitor />} />
           <Route path="usage" element={<Usage />} />
           <Route path="providers" element={<Providers />} />
           <Route path="models" element={<Models />} />
